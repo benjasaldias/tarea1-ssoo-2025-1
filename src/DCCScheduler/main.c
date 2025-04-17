@@ -50,6 +50,7 @@ typedef struct Process
     unsigned int num_cambios;     // Número de veces que cambia de cola
     unsigned int io_finish;       // Tick en el que termina la operación de I/O
     int started;                  // Flag para indicar si ya se ejecutó (para calcular response)
+    struct Process *prev;
     struct Process *next;
 } Process;
 
@@ -150,7 +151,7 @@ Queue *createQueue(int type)
 
 void enqueue(Queue *queue, Process *p)
 {
-    printf("entramos a enqueue\n");
+    printf("%s entra a queue %d\n", p->name, queue->type);
     p->quantum = queue->type * q;
 
     if (queue->head == NULL)
@@ -215,6 +216,17 @@ void enqueue(Queue *queue, Process *p)
         }
         prev->next = p;
     }
+
+    Process *current = queue->head;
+    Process *prev = NULL;   
+    while (current != NULL)
+    {
+        if (prev != NULL) {
+            current->prev = prev;
+        }
+        prev = current;
+        current = current->next;
+    }
 }
 
 Process *dequeue(Queue *queue)
@@ -228,16 +240,16 @@ Process *dequeue(Queue *queue)
 
 void freeQueue(Queue *queue)
 {
-    Process *temp;
+    // Process *temp;
     if (queue)
     {
-        Process *current = queue->head;
-        while (current != NULL)
-        {
-            temp = current->next;
-            free(current);
-            current = temp;
-        }
+        // Process *current = queue->head;
+        // while (current != NULL)
+        // {
+        //     temp = current->next;
+        //     free(current);
+        //     current = temp;
+        // }
         free(queue);
     }
 }
@@ -265,7 +277,103 @@ Process createProcessFromTokens(char **tokens)
     p.num_cambios = 0;
     p.started = 0;
     p.next = NULL;
+    p.prev = NULL;
     return p;
+}
+
+void update_queues(Process* processes, int *num_processes, int *current_tick, Queue* highQueue, Queue* mediumQueue, Queue* lowQueue) {
+    for (int i = 0; i < *num_processes; i++)
+    {
+        if (processes[i].state == READY && processes[i].t_inicio <= *current_tick)       
+        {
+            // En función de la prioridad, se determina la cola de ingreso:
+            if (processes[i].priority >= 1 && processes[i].priority <= 10)
+                enqueue(highQueue, &processes[i]);
+            else if (processes[i].priority >= 11 && processes[i].priority <= 20)
+                enqueue(mediumQueue, &processes[i]);
+            else if (processes[i].priority >= 21 && processes[i].priority <= 30)
+                enqueue(lowQueue, &processes[i]);
+        }
+    }
+}
+
+void update_waiting(Process* current, int *current_tick) {
+    current->state = READY;
+    current->waiting_time += *current_tick - current->io_finish;
+}
+
+void start_process(Process* current, int *current_tick) {
+    current->started = 1;
+    current->state = RUNNING;
+    current->response = *current_tick;
+    printf("response: %s %d\n", current->name, current->response);
+}
+
+void full_quantum(Process* current, int *current_tick, Queue* queue, Queue* mediumQueue, Queue* lowQueue, int *processes_finished) {
+    current->state = READY;
+    
+    // actualizar el quantum y mover a la siguiente cola
+    if (current->prev != NULL) {
+        current->prev->next = current->next;
+    }
+
+    else if (queue->head == current) {
+        queue->head = current->next;
+    }
+
+    if (current->n_bursts <= 0) {
+        current->state = FINISHED;
+        processes_finished++;
+        printf("finished full: %s\n", current->name);
+        current->turnaround = *current_tick - current->t_inicio;
+        printf("turnaround: %s %d\n", current->name, current->turnaround);
+    }
+    else {
+        if (queue->type == 2) {
+            current->quantum = q;
+            current->num_cambios++;
+            enqueue(mediumQueue, current);
+        }
+        else {
+            current->quantum = 0; // valor alto para que no se consuma el quantum
+            current->num_cambios++;
+            enqueue(lowQueue, current);
+        }
+        // else if (queue->type == 0) {
+        //     printf("ola\n");
+        // }
+    }
+    current->next = NULL;
+}
+
+void partial_quantum(Process* current, int *current_tick, int *processes_finished) {                 
+    // actualizar ticks y quantum
+
+    if (current->n_bursts > 0) {
+        // si quedan bursts, pasamos a WAITING
+        current->state = WAITING;
+        current->io_finish = *current_tick + current->io_wait;
+        printf("io_finish: %s %d\n", current->name, current->io_finish);
+    }
+    else {
+         // si no quedan bursts, pasamos a FINISHED
+        current->state = FINISHED;
+        printf("finished partial: %s\n", current->name);
+        current->turnaround = *current_tick - current->t_inicio;
+        printf("turnaround: %s %d\n", current->name, current->turnaround);
+        *processes_finished += 1;
+    }
+}
+
+void update_bursts(Process* current, int *current_tick) {
+    if (current->remaining_burst == 0) {
+        current->remaining_burst = current->burst;
+    }
+    if (current->n_bursts <= 0) {
+        current->state = FINISHED;
+        current->turnaround = *current_tick - current->t_inicio;
+        // printf("turnaround: %s %d\n", current->name, current->turnaround);
+    }
 }
 
 /* Esqueleto de la simulación del scheduler */
@@ -286,95 +394,120 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
          4. Contabilizar estadísticas (turnaround, response, waiting_time, cambios de cola).
        Aquí se presenta un bucle de simulación simplificado que debes completar.
     */
+
+
+    // Ejecutar el proceso en CPU según las prioridades (High > Medium > Low)
     while (processes_finished < num_processes)
     {
 
-        // 1. Insertar procesos al sistema en el tick actual
-        for (int i = 0; i < num_processes; i++)
-        {
-            if (processes[i].state == READY)
-            {
-                // En función de la prioridad, se determina la cola de ingreso:
-                if (processes[i].priority >= 1 && processes[i].priority <= 10)
-                    enqueue(highQueue, &processes[i]);
-                else if (processes[i].priority >= 11 && processes[i].priority <= 20)
-                    enqueue(mediumQueue, &processes[i]);
-                else if (processes[i].priority >= 21 && processes[i].priority <= 30)
-                    enqueue(lowQueue, &processes[i]);
-            }
-        }
+        // Insertar procesos al sistema en el tick actual
+        update_queues(processes, &num_processes, &current_tick, highQueue, mediumQueue, lowQueue);
 
-        for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+
             Queue* queue = NULL;
 
             // determina a qué cola accedemos
-            if (i == 0) {
+            if (j == 0) {
                 queue = highQueue;
-            } else if (i == 1) {
+            } else if (j == 1) {
                 queue = mediumQueue;
-            } else if (i == 2) {
+            } else if (j == 2) {
                 queue = lowQueue;
             }
 
             // saltar colas vacías
             if (queue == NULL || queue->head == NULL) {
-                printf("continuar\n");
                 continue;
             }
-            
             Process* current = queue->head;
-            printf("numero de for: %d\n", i);
-            printf("current: %s\n", current->name);
-            printf("next: %s\n", current->next->name);
-            printf("current_tick: %d\n", current_tick);
-
             while (current != NULL) {
+
                 // sacar de WAITING a procesos que terminaron su I/O
-                if (current->state == WAITING && current->io_finish == current_tick) {
-                    current->state = READY;
-                    current->waiting_time += current_tick - current->io_finish;
+                if (current->state == WAITING && current->io_finish <= current_tick) {
+                    update_waiting(current, &current_tick);
                 }
+
                 // caso de que el proceso no haya empezado
-                if (current->started == 0 && current->t_inicio >= current_tick) {
-                    current->started = 1;
-                    current->state = RUNNING;
-                    current->response = current_tick - current->t_inicio;
+                if (current->started == 0 && current->t_inicio <= current_tick) {
+                    printf("starting process at tick %d == %d\n", current_tick, current->t_inicio);
+                    start_process(current, &current_tick);
                 }
-                // verificar que quedan bursts y que no está en I/O
-                if (current->n_bursts > 0 && ((current->state == READY) | (current->state == RUNNING))) {
-                    
-                    // se consume el quantum completo y cede el CPU
-                    if (current->remaining_burst > current->quantum) {
-                        current->remaining_burst-= current->quantum;
-                        current_tick += current->quantum;
-                        current->state = READY;
-                    }
 
-                    // se consume el quantum parcial y cede el CPU
-                    else if (current->remaining_burst > 0 && current->remaining_burst <= current->quantum) {
-                        current_tick += current->remaining_burst;
-                        current->remaining_burst = 0;
-                        current->n_bursts--;
-                        current->remaining_burst = current->burst;
+                // verificar si el proceso ya empezó y no está en FINISHED
+                if (current->started == 1 && current->state != FINISHED) {
+                    if ((current->state == READY) | (current->state == RUNNING)) {
+                        if (((current->quantum > 0) | (queue->type == 0)) && current->remaining_burst > 0 && current->n_bursts > 0) {
+                            // se ejecuta el proceso en la CPU
+                            current->state = RUNNING;
 
-                        if (current->n_bursts > 0) {
-                            // si quedan bursts, pasamos a WAITING
-                            current->state = WAITING;
-                            current->io_finish = current_tick + current->io_wait;
+                            int loop_range = 0;
+
+                            // se determina el rango de ejecución
+                            if (queue->type == 0) {
+                                loop_range = current->remaining_burst;
+                            }
+                            else {
+                                loop_range = current->quantum;
+                            }
+
+                            for (int i = 0; i < loop_range; i++) {
+                                current->remaining_burst--;
+                                current->quantum--;
+                                current_tick++;
+                                // FALTA: actualizar todo lo que depende del avance de los ticks aqui
+
+                                // se consume el quantum parcial y cede el CPU
+                                if (current->remaining_burst == 0 && current->quantum > 0) {
+                                    current->n_bursts--;
+                                    current->remaining_burst = current->burst;
+                                    partial_quantum(current, &current_tick, &processes_finished);
+                                    break;
+                                }
+
+                                // se consume el quantum completo y cede el CPU
+                                if (current->quantum == 0) {
+                                    if (current->remaining_burst == 0) {
+                                        current->n_bursts--;
+                                        current->remaining_burst = current->burst;
+                                    }
+                                    full_quantum(current, &current_tick, queue, mediumQueue, lowQueue, &processes_finished);
+                                    printf("full quantum quantum: %d\n", current->quantum);
+                                    printf("full quantum state: %d\n", current->state);
+                                    break;
+                                }
+
+                                if (current->remaining_burst == 0) {
+                                    current->n_bursts--;
+                                    current->remaining_burst = current->burst;
+                                    partial_quantum(current, &current_tick, &processes_finished);
+                                    break;
+                                }
+                            }
                         }
-                        else {
-                            // si no quedan bursts, pasamos a FINISHED
-                            current->state = FINISHED;
-                            current->turnaround = current_tick - current->t_inicio;
-                            processes_finished++;
+
+                        // // se consume el quantum completo y cede el CPU
+                        // if (current->remaining_burst > 0 && current->remaining_burst >= current->quantum) {
+                        //     full_quantum(current, &current_tick, queue, mediumQueue, lowQueue, &processes_finished);
+                        // }
+                    
+                        // // se consume el quantum parcial y cede el CPU
+                        // else if (current->remaining_burst > 0 && current->remaining_burst < current->quantum) {
+                        //     partial_quantum(current, &current_tick, &processes_finished);
+                        // }
+
+                        update_bursts(current, &current_tick);
                     }
+                    else if (current->n_bursts <= 0) { 
+                        printf("finished final: %s\n", current->name);
+                        current->state = FINISHED;
+                        processes_finished++;
+                    } 
                 }
-                else {
-                }
-                current = current->next;
-            }
+            current = current->next;
             }
         }
+
 
         // 2. Actualización de procesos en la CPU (quantum, burst, etc.)
         //     Aquí se debe implementar la lógica para:
@@ -401,6 +534,7 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
 
         current_tick++; // Incrementar el contador de ticks
     }
+    printf("total ticks: %d\n", current_tick);
 
     /* Al finalizar la simulación se imprime el archivo de salida CSV con las estadísticas */
     printStatistics(processes, num_processes, output_filename);
@@ -443,3 +577,4 @@ void printStatistics(Process *processes, int num_processes, const char *output_f
     }
     fclose(fp);
 }
+
