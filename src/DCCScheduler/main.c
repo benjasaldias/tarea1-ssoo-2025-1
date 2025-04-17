@@ -113,11 +113,11 @@
 		 
 		 processes[i] = createProcessFromTokens(input_file->lines[i]);
 	 }
+
+	/* Inicia la simulación del scheduler */
+	simulateScheduler(processes, input_file->len, q, n, output_filename);
  
 	 input_file_destroy(input_file);
- 
-	 /* Inicia la simulación del scheduler */
-	 simulateScheduler(processes, input_file->len, q, n, output_filename);
  
 	 free(processes);
 	 return EXIT_SUCCESS;
