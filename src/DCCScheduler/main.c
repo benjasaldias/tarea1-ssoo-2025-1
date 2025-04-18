@@ -30,7 +30,7 @@ typedef enum
 } ProcessState;
 
 /* Estructura que modela un proceso */
-typedef struct Process 
+typedef struct Process
 {
     char name[64];
     unsigned int pid;
@@ -288,11 +288,12 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
     */
     while (processes_finished < num_processes)
     {
+        printf("current tick: %d\n", current_tick);
 
         // 1. Insertar procesos al sistema en el tick actual
         for (int i = 0; i < num_processes; i++)
         {
-            if (processes[i].state == READY)
+            if (processes[i].t_inicio == current_tick)
             {
                 // En función de la prioridad, se determina la cola de ingreso:
                 if (processes[i].priority >= 1 && processes[i].priority <= 10)
@@ -304,75 +305,90 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
             }
         }
 
-        for (int i = 0; i < 3; i++) {
-            Queue* queue = NULL;
+        for (int i = 0; i < 3; i++)
+        {
+            Queue *queue = NULL;
 
             // determina a qué cola accedemos
-            if (i == 0) {
+            if (i == 0)
+            {
                 queue = highQueue;
-            } else if (i == 1) {
+            }
+            else if (i == 1)
+            {
                 queue = mediumQueue;
-            } else if (i == 2) {
+            }
+            else if (i == 2)
+            {
                 queue = lowQueue;
             }
 
             // saltar colas vacías
-            if (queue == NULL || queue->head == NULL) {
+            if (queue == NULL || queue->head == NULL)
+            {
                 printf("continuar\n");
                 continue;
             }
-            
-            Process* current = queue->head;
+
+            Process *current = queue->head;
             printf("numero de for: %d\n", i);
             printf("current: %s\n", current->name);
             printf("next: %s\n", current->next->name);
-            printf("current_tick: %d\n", current_tick);
 
-            while (current != NULL) {
+            while (current != NULL)
+            {
                 // sacar de WAITING a procesos que terminaron su I/O
-                if (current->state == WAITING && current->io_finish == current_tick) {
+                if (current->state == WAITING && current->io_finish == current_tick)
+                {
                     current->state = READY;
                     current->waiting_time += current_tick - current->io_finish;
                 }
                 // caso de que el proceso no haya empezado
-                if (current->started == 0 && current->t_inicio >= current_tick) {
+                if (current->started == 0 && current->t_inicio >= current_tick)
+                {
                     current->started = 1;
                     current->state = RUNNING;
                     current->response = current_tick - current->t_inicio;
                 }
                 // verificar que quedan bursts y que no está en I/O
-                if (current->n_bursts > 0 && ((current->state == READY) | (current->state == RUNNING))) {
-                    
+                if (current->n_bursts > 0 && ((current->state == READY) | (current->state == RUNNING)))
+                {
+
                     // se consume el quantum completo y cede el CPU
-                    if (current->remaining_burst > current->quantum) {
-                        current->remaining_burst-= current->quantum;
+                    if (current->remaining_burst > current->quantum)
+                    {
+                        current->remaining_burst -= current->quantum;
                         current_tick += current->quantum;
                         current->state = READY;
                     }
 
                     // se consume el quantum parcial y cede el CPU
-                    else if (current->remaining_burst > 0 && current->remaining_burst <= current->quantum) {
+                    else if (current->remaining_burst > 0 && current->remaining_burst <= current->quantum)
+                    {
                         current_tick += current->remaining_burst;
                         current->remaining_burst = 0;
                         current->n_bursts--;
                         current->remaining_burst = current->burst;
 
-                        if (current->n_bursts > 0) {
+                        if (current->n_bursts > 0)
+                        {
                             // si quedan bursts, pasamos a WAITING
                             current->state = WAITING;
                             current->io_finish = current_tick + current->io_wait;
                         }
-                        else {
+                        else
+                        {
                             // si no quedan bursts, pasamos a FINISHED
                             current->state = FINISHED;
                             current->turnaround = current_tick - current->t_inicio;
                             processes_finished++;
+                        }
                     }
+                    else
+                    {
+                    }
+                    current = current->next;
                 }
-                else {
-                }
-                current = current->next;
-            }
             }
         }
 
