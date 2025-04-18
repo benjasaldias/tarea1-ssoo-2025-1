@@ -18,6 +18,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <limits.h>
 #include "../file_manager/manager.h"
 
 /* Definición de estados del proceso */
@@ -28,6 +30,22 @@ typedef enum
     WAITING,
     FINISHED
 } ProcessState;
+
+typedef enum
+{
+    HIGH,
+    MEDIUM,
+    LOW
+} QueueType;
+
+QueueType incrementQueueType(QueueType q)
+{
+    if (q < LOW)
+    {
+        return q + 1;
+    }
+    return q; // Stay at LOW
+}
 
 /* Estructura que modela un proceso */
 typedef struct Process
@@ -51,6 +69,7 @@ typedef struct Process
     unsigned int io_finish;       // Tick en el que termina la operación de I/O
     int started;                  // Flag para indicar si ya se ejecutó (para calcular response)
     struct Process *next;
+    QueueType queue_type;
 } Process;
 
 /* Estructura para las colas de procesos */
@@ -78,6 +97,12 @@ void printStatistics(Process *processes, int num_processes, const char *output_f
 int q;
 int num_processes;
 
+Queue *highQueue;
+Queue *mediumQueue;
+Queue *lowQueue;
+
+Process *running_process;
+
 int main(int argc, char const *argv[])
 {
     if (argc != 5)
@@ -95,8 +120,8 @@ int main(int argc, char const *argv[])
     /* Lectura del input mediante file_manager */
     InputFile *input_file = read_file(input_filename);
 
-    printf("Cantidad de procesos: %d\n", input_file->len);
-    num_processes = input_file->len - 1; // Se resta 1 para ignorar la cabecera
+    num_processes = input_file->len;
+    printf("Cantidad de procesos: %d\n", num_processes);
     printf("Procesos:\n");
 
     /* Se crea un arreglo de procesos basado en las líneas leídas.
@@ -124,6 +149,7 @@ int main(int argc, char const *argv[])
 
         processes[i] = createProcessFromTokens(input_file->lines[i]);
     }
+    sleep(3);
 
     /* Inicia la simulación del scheduler */
     simulateScheduler(processes, input_file->len, q, n, output_filename);
@@ -151,7 +177,6 @@ Queue *createQueue(int type)
 void enqueue(Queue *queue, Process *p)
 {
     printf("entramos a enqueue\n");
-    p->quantum = queue->type * q;
 
     if (queue->head == NULL)
     {
@@ -167,7 +192,7 @@ void enqueue(Queue *queue, Process *p)
 
         while (current != NULL)
         {
-            if (current->priority > p->priority)
+            if (p->priority < current->priority)
             {
                 if (prev != NULL)
                 {
@@ -220,25 +245,37 @@ void enqueue(Queue *queue, Process *p)
 Process *dequeue(Queue *queue)
 {
     if (queue->head == NULL)
+    {
         return NULL;
-    return NULL;
-    // Process *current = queue->head;
-    // return current;
+    }
+    else
+    {
+        Process *temp = queue->head;
+        queue->head = temp->next;
+        return temp;
+    }
 }
 
-void freeQueue(Queue *queue)
+void removeProcessFromQueue(int pid, Queue *queue)
 {
-    Process *temp;
-    if (queue)
+    if (queue->head->pid == pid)
     {
-        Process *current = queue->head;
-        while (current != NULL)
+        queue->head = queue->head->next;
+        return;
+    }
+
+    Process *prev = NULL;
+    Process *current = queue->head;
+    Process *next = current->next;
+
+    while (current != NULL)
+    {
+        if (current->pid == pid)
         {
-            temp = current->next;
-            free(current);
-            current = temp;
+            prev->next = next;
+            current->next = NULL;
+            return;
         }
-        free(queue);
     }
 }
 
@@ -265,7 +302,58 @@ Process createProcessFromTokens(char **tokens)
     p.num_cambios = 0;
     p.started = 0;
     p.next = NULL;
+    p.queue_type = LOW;
     return p;
+}
+
+void insert_process_in_queues(Process *p)
+{
+    printf("Insert\n");
+    // En función de la prioridad, se determina la cola de ingreso:
+    if (p->priority >= 1 && p->priority <= 10)
+    {
+        p->queue_type = HIGH;
+        enqueue(highQueue, p);
+    }
+    else if (p->priority >= 11 && p->priority <= 20)
+    {
+        p->queue_type = MEDIUM;
+        enqueue(mediumQueue, p);
+    }
+    else if (p->priority >= 21 && p->priority <= 30)
+    {
+        p->queue_type = LOW;
+        enqueue(lowQueue, p);
+    }
+}
+
+void reinsertProcess(Process *p)
+{
+    printf("Reinsert\n");
+    Queue *queue;
+    if (p->queue_type == HIGH)
+    {
+        queue = highQueue;
+    }
+    else if (p->queue_type == MEDIUM)
+    {
+        queue = mediumQueue;
+    }
+    else
+    {
+        queue = lowQueue;
+    }
+
+    enqueue(queue, p);
+}
+
+void move_processes(Queue *current_queue, Queue *new_queue)
+{
+    printf("Move\n");
+    while (current_queue->head != NULL)
+    {
+        enqueue(new_queue, dequeue(current_queue));
+    }
 }
 
 /* Esqueleto de la simulación del scheduler */
@@ -275,145 +363,121 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
     int processes_finished = 0;
 
     /* Creación de las tres colas: High, Medium y Low */
-    Queue *highQueue = createQueue(2);
-    Queue *mediumQueue = createQueue(1);
-    Queue *lowQueue = createQueue(0);
+    highQueue = createQueue(2);
+    mediumQueue = createQueue(1);
+    lowQueue = createQueue(0);
 
-    /* La lógica de simulación debe:
-         1. Insertar procesos a sus colas correspondientes al cumplir su T_INICIO.
-         2. Ejecutar el proceso en CPU según las prioridades (High > Medium > Low).
-         3. Actualizar estados (quantum, burst, I/O, aging, etc.) cada tick.
-         4. Contabilizar estadísticas (turnaround, response, waiting_time, cambios de cola).
-       Aquí se presenta un bucle de simulación simplificado que debes completar.
-    */
     while (processes_finished < num_processes)
     {
-        printf("current tick: %d\n", current_tick);
+        // sleep(1);
+        printf("Tick: %d\n", current_tick);
 
-        // 1. Insertar procesos al sistema en el tick actual
+        // 1. Actualizar los procesos que hayan terminado su tiempo de espera de I/O de WAITING a READY.
         for (int i = 0; i < num_processes; i++)
         {
-            if (processes[i].t_inicio == current_tick)
+            if (processes[i].state == WAITING && processes[i].io_finish == current_tick)
             {
-                // En función de la prioridad, se determina la cola de ingreso:
-                if (processes[i].priority >= 1 && processes[i].priority <= 10)
-                    enqueue(highQueue, &processes[i]);
-                else if (processes[i].priority >= 11 && processes[i].priority <= 20)
-                    enqueue(mediumQueue, &processes[i]);
-                else if (processes[i].priority >= 21 && processes[i].priority <= 30)
-                    enqueue(lowQueue, &processes[i]);
+                processes[i].state = READY;
             }
         }
 
-        for (int i = 0; i < 3; i++)
+        // 2. Si hay un proceso en estado RUNNING, actualizar su estado segun corresponda.
+        if (running_process)
         {
-            Queue *queue = NULL;
-
-            // determina a qué cola accedemos
-            if (i == 0)
+            if (running_process->remaining_burst == 0) // Fin rafaga de ejecucion
             {
-                queue = highQueue;
-            }
-            else if (i == 1)
-            {
-                queue = mediumQueue;
-            }
-            else if (i == 2)
-            {
-                queue = lowQueue;
-            }
-
-            // saltar colas vacías
-            if (queue == NULL || queue->head == NULL)
-            {
-                printf("continuar\n");
-                continue;
-            }
-
-            Process *current = queue->head;
-            printf("numero de for: %d\n", i);
-            printf("current: %s\n", current->name);
-            printf("next: %s\n", current->next->name);
-
-            while (current != NULL)
-            {
-                // sacar de WAITING a procesos que terminaron su I/O
-                if (current->state == WAITING && current->io_finish == current_tick)
+                running_process->n_bursts--;
+                if (running_process->n_bursts == 0) // Fin ejecucion
                 {
-                    current->state = READY;
-                    current->waiting_time += current_tick - current->io_finish;
+                    printf("Termino proceso %s\n", running_process->name);
+                    running_process->state = FINISHED;
+                    processes_finished++;
                 }
-                // caso de que el proceso no haya empezado
-                if (current->started == 0 && current->t_inicio >= current_tick)
+                else
                 {
-                    current->started = 1;
-                    current->state = RUNNING;
-                    current->response = current_tick - current->t_inicio;
+                    running_process->state = WAITING;
+                    running_process->io_finish = current_tick + running_process->io_wait;
+                    reinsertProcess(running_process); // 3.1. Si un proceso salio de la CPU, ingresarlo a la cola que corresponda.
                 }
-                // verificar que quedan bursts y que no está en I/O
-                if (current->n_bursts > 0 && ((current->state == READY) | (current->state == RUNNING)))
+            }
+            else if (running_process->quantum == 0) // Quantum expirado
+            {
+                running_process->state = READY;
+                running_process->queue_type = incrementQueueType(running_process->queue_type);
+                reinsertProcess(running_process); // 3.1. Si un proceso salio de la CPU, ingresarlo a la cola que corresponda.
+            }
+            else // Caso normal
+            {
+                running_process->remaining_burst--;
+                running_process->quantum--;
+            }
+        }
+
+        // 3. Ingresar los procesos a las colas segun corresponda (3.1 mas arriba)
+
+        // 3.2 Si el tiempo de inicio de un proceso se cumple, ingresarlo a la cola que corresponda.
+        for (int i = 0; i < num_processes; i++)
+        {
+            if (processes[i].t_inicio == current_tick && processes[i].state == READY)
+            {
+                insert_process_in_queues(&processes[i]);
+            }
+        }
+
+        // 3.3 Si han pasado n ticks, subir la prioridad de todos los procesos, ingresandolos a la cola siguiente correspondiente.
+        if (current_tick > 0 && (current_tick % n) == 0)
+        {
+            move_processes(mediumQueue, highQueue);
+            move_processes(lowQueue, mediumQueue);
+        }
+
+        // 4. Si no hay un proceso en estado RUNNING, ingresar el proceso de mayor prioridad en estado READY a la CPU
+        if (!running_process)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                Queue *queue = NULL;
+                int quantum;
+
+                // determina a qué cola accedemos
+                if (i == 0)
                 {
+                    queue = highQueue;
+                    quantum = 2 * q;
+                }
+                else if (i == 1)
+                {
+                    queue = mediumQueue;
+                    quantum = q;
+                }
+                else if (i == 2)
+                {
+                    queue = lowQueue;
+                    quantum = INT_MAX;
+                }
 
-                    // se consume el quantum completo y cede el CPU
-                    if (current->remaining_burst > current->quantum)
+                // saltar colas vacías
+                if (queue == NULL || queue->head == NULL)
+                    continue;
+
+                Process *current = queue->head;
+
+                while (current != NULL)
+                {
+                    if (current->state == READY)
                     {
-                        current->remaining_burst -= current->quantum;
-                        current_tick += current->quantum;
-                        current->state = READY;
+                        running_process = current;
+                        removeProcessFromQueue(current->pid, queue);
+                        running_process->state = RUNNING;
+                        running_process->quantum = quantum;
+                        running_process->remaining_burst = running_process->burst;
+                        break;
                     }
 
-                    // se consume el quantum parcial y cede el CPU
-                    else if (current->remaining_burst > 0 && current->remaining_burst <= current->quantum)
-                    {
-                        current_tick += current->remaining_burst;
-                        current->remaining_burst = 0;
-                        current->n_bursts--;
-                        current->remaining_burst = current->burst;
-
-                        if (current->n_bursts > 0)
-                        {
-                            // si quedan bursts, pasamos a WAITING
-                            current->state = WAITING;
-                            current->io_finish = current_tick + current->io_wait;
-                        }
-                        else
-                        {
-                            // si no quedan bursts, pasamos a FINISHED
-                            current->state = FINISHED;
-                            current->turnaround = current_tick - current->t_inicio;
-                            processes_finished++;
-                        }
-                    }
-                    else
-                    {
-                    }
                     current = current->next;
                 }
             }
         }
-
-        // 2. Actualización de procesos en la CPU (quantum, burst, etc.)
-        //     Aquí se debe implementar la lógica para:
-        //      - Decrementar burst y quantum del proceso RUNNING.
-        //      - Cambiar estados a WAITING o FINISHED cuando corresponda.
-        //      - Mover procesos a otra cola si se consumió el quantum.
-        // (Implementación pendiente)
-
-        // 3. Aplicar aging cada n ticks (si current_tick > 0)
-        if (current_tick > 0 && (current_tick % n) == 0)
-        {
-            aging(highQueue);
-            aging(mediumQueue);
-            aging(lowQueue);
-        }
-
-        // 4. Seleccionar el siguiente proceso para ejecutar en la CPU
-        //    (la lógica debe elegir de highQueue, si está vacía entonces mediumQueue, etc.)
-        //    (Implementación pendiente)
-
-        // 5. Actualizar estadísticas y verificar si algún proceso termina en este tick.
-        //    Incrementar processes_finished cuando un proceso pase a FINISHED.
-        //    (Implementación pendiente)
 
         current_tick++; // Incrementar el contador de ticks
     }
@@ -422,18 +486,9 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
     printStatistics(processes, num_processes, output_filename);
 
     /* Liberar recursos de las colas */
-    freeQueue(highQueue);
-    freeQueue(mediumQueue);
-    freeQueue(lowQueue);
-}
-
-/* Función de aging: se debe recorrer la cola y, según las reglas,
-   mover un proceso a la siguiente cola si no está en RUNNING.
-   (Implementación pendiente según las reglas de la tarea) */
-void aging(Queue *queue)
-{
-    // Ejemplo: se podría recorrer la cola y actualizar la prioridad de cada proceso.
-    // Esta función es un esqueleto para que completes la lógica.
+    free(highQueue);
+    free(mediumQueue);
+    free(lowQueue);
 }
 
 /* Imprime las estadísticas de cada proceso en formato CSV, ordenado por el tiempo de término.

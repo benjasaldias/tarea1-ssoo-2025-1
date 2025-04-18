@@ -1,0 +1,9 @@
+./DCCScheduler "testT1/Test 1/Input.txt" "testT1/Test 1/Output_test_1.csv" 4 10
+
+./DCCScheduler "testT1/Test 2/Input.txt" "testT1/Test 2/Output_test_2.csv" 4 10
+
+./DCCScheduler "testT1/Test 3/Input.txt" "testT1/Test 3/Output_test_3.csv" 2 8
+
+./DCCScheduler "testT1/Test 4/Input.txt" "testT1/Test 4/Output_test_4.csv" 5 7
+
+./DCCScheduler "testT1/Test 5/Input.txt" "testT1/Test 5/Output_test_5.csv" 3 12
