@@ -17,6 +17,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 #include <limits.h>
@@ -40,9 +41,9 @@ typedef enum
 
 QueueType incrementQueueType(QueueType q)
 {
-    if (q < LOW)
+    if (q > LOW)
     {
-        return q + 1;
+        return q - 1;
     }
     return q; // Stay at LOW
 }
@@ -55,7 +56,7 @@ typedef struct Process
     ProcessState state;
     unsigned int t_inicio; // Tick en el que el proceso ingresa al sistema
     unsigned int burst;    // Duración de la ráfaga de CPU
-    unsigned int n_bursts; // Número total de ráfagas
+    int n_bursts; // Número total de ráfagas
     unsigned int io_wait;  // Tiempo de espera para I/O entre ráfagas
     unsigned int priority; // Prioridad original (1 a 30)
 
@@ -67,6 +68,7 @@ typedef struct Process
     unsigned int waiting_time;    // Suma de intervalos en READY o WAITING
     unsigned int num_cambios;     // Número de veces que cambia de cola
     unsigned int io_finish;       // Tick en el que termina la operación de I/O
+    unsigned int total_runtime;   // para calcular waiting time total
     int started;                  // Flag para indicar si ya se ejecutó (para calcular response)
     struct Process *next;
     QueueType queue_type;
@@ -176,7 +178,21 @@ Queue *createQueue(int type)
 
 void enqueue(Queue *queue, Process *p)
 {
-    printf("entramos a enqueue\n");
+    // printf("entramos a enqueue\n");
+    p->next = NULL;
+
+    if (p->quantum <= 0) {
+    // reajustar quantums
+        if (queue->type == HIGH) {
+            p->quantum = 2*q;
+        }
+        else if (queue->type == MEDIUM) {
+            p->quantum = q;
+        }
+        else {
+            p->quantum = -1;    // LOW NO TIENE QUANTUM
+        }
+    }
 
     if (queue->head == NULL)
     {
@@ -225,7 +241,7 @@ void enqueue(Queue *queue, Process *p)
             }
 
             prev = current;
-            current = prev->next;
+            current = current->next;
         }
     }
     else
@@ -258,24 +274,30 @@ Process *dequeue(Queue *queue)
 
 void removeProcessFromQueue(int pid, Queue *queue)
 {
-    if (queue->head->pid == pid)
-    {
-        queue->head = queue->head->next;
-        return;
+    if (queue->head != NULL){
+        if (queue->head->pid == pid)
+        {
+            queue->head = queue->head->next;
+            return;
+        }
     }
 
     Process *prev = NULL;
     Process *current = queue->head;
-    Process *next = current->next;
 
     while (current != NULL)
     {
+        Process *next = current->next;
         if (current->pid == pid)
         {
-            prev->next = next;
+            if (prev != NULL) {
+                prev->next = next;
+            }
             current->next = NULL;
-            return;
+            break;
+            // return;
         }
+        current = next;
     }
 }
 
@@ -301,6 +323,7 @@ Process createProcessFromTokens(char **tokens)
     p.waiting_time = 0;
     p.num_cambios = 0;
     p.started = 0;
+    p.total_runtime = 0;
     p.next = NULL;
     p.queue_type = LOW;
     return p;
@@ -308,7 +331,7 @@ Process createProcessFromTokens(char **tokens)
 
 void insert_process_in_queues(Process *p)
 {
-    printf("Insert\n");
+    // printf("Insert\n");
     // En función de la prioridad, se determina la cola de ingreso:
     if (p->priority >= 1 && p->priority <= 10)
     {
@@ -325,11 +348,15 @@ void insert_process_in_queues(Process *p)
         p->queue_type = LOW;
         enqueue(lowQueue, p);
     }
+    else {
+        printf("not queued\n");
+    }
 }
 
 void reinsertProcess(Process *p)
 {
-    printf("Reinsert\n");
+    // printf("Reinsert\n");
+    p->next = NULL;
     Queue *queue;
     if (p->queue_type == HIGH)
     {
@@ -343,13 +370,13 @@ void reinsertProcess(Process *p)
     {
         queue = lowQueue;
     }
-
+    removeProcessFromQueue(p->pid, queue);
     enqueue(queue, p);
 }
 
 void move_processes(Queue *current_queue, Queue *new_queue)
 {
-    printf("Move\n");
+    // printf("Move\n");
     while (current_queue->head != NULL)
     {
         enqueue(new_queue, dequeue(current_queue));
@@ -375,7 +402,7 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
         // 1. Actualizar los procesos que hayan terminado su tiempo de espera de I/O de WAITING a READY.
         for (int i = 0; i < num_processes; i++)
         {
-            if (processes[i].state == WAITING && processes[i].io_finish == current_tick)
+            if (processes[i].state == WAITING && processes[i].io_finish >= current_tick)
             {
                 processes[i].state = READY;
             }
@@ -384,32 +411,47 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
         // 2. Si hay un proceso en estado RUNNING, actualizar su estado segun corresponda.
         if (running_process)
         {
-            if (running_process->remaining_burst == 0) // Fin rafaga de ejecucion
+            if (running_process->remaining_burst == 0 && running_process->state == RUNNING) // Fin rafaga de ejecucion
             {
                 running_process->n_bursts--;
-                if (running_process->n_bursts == 0) // Fin ejecucion
+
+                if (running_process->quantum == 0 && running_process->n_bursts > 0) {    // Quantum expirado
+                    running_process->queue_type = incrementQueueType(running_process->queue_type);
+                }
+
+                if (running_process->n_bursts <= 0) // Fin ejecucion
                 {
                     printf("Termino proceso %s\n", running_process->name);
                     running_process->state = FINISHED;
+                    running_process->turnaround = current_tick - running_process->t_inicio;
+                    running_process->waiting_time = running_process->turnaround - running_process->total_runtime;
                     processes_finished++;
                 }
                 else
                 {
                     running_process->state = WAITING;
+                    running_process->remaining_burst = running_process->burst;
                     running_process->io_finish = current_tick + running_process->io_wait;
                     reinsertProcess(running_process); // 3.1. Si un proceso salio de la CPU, ingresarlo a la cola que corresponda.
                 }
             }
             else if (running_process->quantum == 0) // Quantum expirado
             {
+                running_process->num_cambios++;
                 running_process->state = READY;
                 running_process->queue_type = incrementQueueType(running_process->queue_type);
                 reinsertProcess(running_process); // 3.1. Si un proceso salio de la CPU, ingresarlo a la cola que corresponda.
             }
             else // Caso normal
             {
+                if (running_process->started == 0) {
+                    running_process->started = 1;
+                    running_process->response = current_tick - running_process->t_inicio;
+                }
                 running_process->remaining_burst--;
                 running_process->quantum--;
+                running_process->total_runtime++;
+                printf("%s: n_bursts: %d ; remaining_burst: %d; quantum: %d\n", running_process->name, running_process->n_bursts, running_process->remaining_burst, running_process->quantum);
             }
         }
 
@@ -420,6 +462,7 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
         {
             if (processes[i].t_inicio == current_tick && processes[i].state == READY)
             {
+                printf("iniciar proceso: %s\n", processes[i].name);
                 insert_process_in_queues(&processes[i]);
             }
         }
@@ -432,6 +475,12 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
         }
 
         // 4. Si no hay un proceso en estado RUNNING, ingresar el proceso de mayor prioridad en estado READY a la CPU
+        if (running_process) {
+            if (running_process->state != RUNNING) {
+                printf("desactivando: %s\n", running_process->name);
+                running_process = NULL;
+            }
+        }
         if (!running_process)
         {
             for (int i = 0; i < 3; i++)
@@ -464,13 +513,18 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
 
                 while (current != NULL)
                 {
+                    // printf("current: %s, state: %d\n", current->name, current->state);
                     if (current->state == READY)
                     {
                         running_process = current;
                         removeProcessFromQueue(current->pid, queue);
                         running_process->state = RUNNING;
+                        printf("process: %s\n", current->name);
+                        if (running_process->started == 0){
                         running_process->quantum = quantum;
                         running_process->remaining_burst = running_process->burst;
+                        }
+                        current_tick--;
                         break;
                     }
 
