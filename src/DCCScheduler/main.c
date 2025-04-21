@@ -409,9 +409,9 @@ void reinsertProcess(Process *p)
 void move_processes(Queue *current_queue, Queue *new_queue)
 {
     // printf("Move\n");
+    printf("current: %d, new: %d\n", current_queue->type, new_queue->type);
     while (current_queue->head != NULL)
     {
-        printf("current: %d, new: %d\n", current_queue->type, new_queue->type);
         enqueue(new_queue, dequeue(current_queue), true);
     }
 }
