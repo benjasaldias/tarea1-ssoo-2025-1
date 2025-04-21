@@ -466,7 +466,6 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
                 else
                 {
                     running_process->state = WAITING;
-                    printf("%s: estado es: %d == %d\n", running_process->name, running_process->state, WAITING);
                     running_process->remaining_burst = running_process->burst;
                     running_process->io_finish = current_tick + running_process->io_wait;
                     reinsertProcess(running_process); // 3.1. Si un proceso salio de la CPU, ingresarlo a la cola que corresponda.
@@ -508,7 +507,7 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
         // 3.3 Si han pasado n ticks, subir la prioridad de todos los procesos, ingresandolos a la cola siguiente correspondiente.
         if (current_tick > 0 && (current_tick % n) == 0 && !process_picked)
         {
-            printf("moviendo colas\n");
+            printf("moviendo queues\n");
             move_processes(mediumQueue, highQueue);
             move_processes(lowQueue, mediumQueue);
         }
@@ -554,7 +553,6 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
 
                 while (current != NULL)
                 {
-                    printf("%s: estado es: %d\n", current->name, current->state);
                     if (current->state == FINISHED) {
                         removeProcessFromQueue(current->pid, queue);
                     }
@@ -568,7 +566,6 @@ void simulateScheduler(Process *processes, int num_processes, int q, int n, cons
                             running_process->quantum = quantum;
                             running_process->remaining_burst = running_process->burst;
                         }
-                        printf("minus tick\n");
                         current_tick--;
                         process_picked = true;
                         break;
